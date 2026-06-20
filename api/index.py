@@ -5,66 +5,33 @@ from supabase import create_client, Client
 
 app = Flask(__name__)
 
-# -------------------------------------------------------------------------
-# 1. Supabase の接続設定
-# -------------------------------------------------------------------------
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    raise ValueError("Supabaseの環境変数（SUPABASE_URL, SUPABASE_ANON_KEY）が設定されていません。")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# 🔴 作り直した新しいSupabaseのテーブル名をここに指定してください
-TABLE_NAME = "users"
-
-# 初回アクセス時のみUPSERTを実行するためのフラグ
-is_first_request = True
+# 🔴 作り直した新しいSupabaseのテーブル名
+TABLE_NAME = "my_new_table"
 
 
 # -------------------------------------------------------------------------
-# 2. CSVデータをSupabaseへUPSERTする関数
+# 💡 安全にSupabaseクライアントを生成する関数
+# グローバル空間ではなく、関数内で呼び出すことで初期化クラッシュを防ぎます
 # -------------------------------------------------------------------------
-def upsert_csv_data():
-    csv_file_path = "data.csv"
+def get_supabase_client() -> Client:
+    SUPABASE_URL = os.environ.get("SUPABASE_URL")
+    SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY")
+
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        raise ValueError("Supabaseの環境変数（SUPABASE_URL, SUPABASE_ANON_KEY）が設定されていません。")
     
-    if not os.path.exists(csv_file_path):
-        print(f"警告: {csv_file_path} が見つかりません。")
-        return False
-
-    try:
-        with open(csv_file_path, mode="r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            rows = [row for row in reader]
-        
-        if rows:
-            supabase.table(TABLE_NAME).upsert(rows).execute()
-            print(f"成功: {len(rows)} 件のデータを '{TABLE_NAME}' にUPSERTしました。")
-            return True
-        else:
-            print("警告: data.csv が空です。")
-            return False
-            
-    except Exception as e:
-        print(f"エラー: CSVのUPSERT中に問題が発生しました: {e}")
-        return False
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 # -------------------------------------------------------------------------
-# 3. ルーティング（画面表示）
+# 1. ルーティング（画面表示：データ取得のみ）
 # -------------------------------------------------------------------------
 @app.route("/")
 def index():
-    global is_first_request
-    
-    # 🔴 クラッシュを避けるため、アプリ起動時ではなく「最初のアクセス時」に安全に実行
-    if is_first_request:
-        print("初回アクセスを検知しました。CSVのUPSERT同期を開始します。")
-        upsert_csv_data()
-        is_first_request = False # 2回目以降のアクセスでは実行しない
-
     try:
+        # 関数内で安全にクライアントを初期化
+        supabase = get_supabase_client()
+        
         # Supabaseから最新のデータを全件取得
         response = supabase.table(TABLE_NAME).select("*").execute()
         rows = response.data
@@ -76,15 +43,32 @@ def index():
 
 
 # -------------------------------------------------------------------------
-# 手動で再同期するためのAPIエンドポイント
+# 2. CSVデータをSupabaseへUPSERTする専用API（手動同期用 URLの末尾に /api/sync）
 # -------------------------------------------------------------------------
 @app.route("/api/sync")
 def sync_data():
-    success = upsert_csv_data()
-    if success:
-        return jsonify({"status": "success", "message": "CSV data successfully synced to Supabase."})
-    else:
-        return jsonify({"status": "error", "message": "Failed to sync CSV data."}), 500
+    csv_file_path = "data.csv"
+    
+    if not os.path.exists(csv_file_path):
+        return jsonify({"status": "error", "message": f"{csv_file_path} が見つかりません。"}), 404
+
+    try:
+        with open(csv_file_path, mode="r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = [row for row in reader]
+        
+        if rows:
+            # 関数内で安全にクライアントを初期化
+            supabase = get_supabase_client()
+            
+            # UPSERT実行
+            supabase.table(TABLE_NAME).upsert(rows).execute()
+            return jsonify({"status": "success", "message": f"{len(rows)} 件のデータをUPSERTしました。"})
+        else:
+            return jsonify({"status": "warning", "message": "data.csv が空です。"})
+            
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 if __name__ == "__main__":
