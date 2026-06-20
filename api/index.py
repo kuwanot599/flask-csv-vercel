@@ -1,75 +1,65 @@
-import os
-import csv
 from flask import Flask, render_template, jsonify
+import csv
+import os
 from supabase import create_client, Client
 
-app = Flask(__name__)
+# Vercel環境でtemplatesフォルダを正しく読み込ませるためのパス明示設定
+app = Flask(__name__, template_folder='templates')
 
-# テーブル名は小文字の「users」で固定
-TABLE_NAME = "users"
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+
+# 💡 以前うまくいっていたフォルダ構造（apiの一つ外の階層の data.csv）を正確に指定
+CSV_FILE = os.path.join(os.path.dirname(__file__), '../data.csv')
 
 
-# -------------------------------------------------------------------------
-# 安全にSupabaseクライアントを生成する関数（インポートエラー対策版）
-# -------------------------------------------------------------------------
-def get_supabase_client() -> Client:
-    SUPABASE_URL = os.environ.get("SUPABASE_URL")
-    SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY")
-
+@app.route('/')
+def sync_and_show_table():
     if not SUPABASE_URL or not SUPABASE_KEY:
-        raise ValueError("Supabaseの環境変数（SUPABASE_URL, SUPABASE_ANON_KEY）が設定されていません。")
-    
-    # 💡 外部クラスをインポートせず、プレーンな辞書型でオプションを指定して
-    # パス不正（PGRST125）とインポートエラー（500）を同時に回避します
-    safe_options = {"schema": "public"}
-    
-    return create_client(SUPABASE_URL, SUPABASE_KEY, options=safe_options)
+        return "エラー: Supabaseの環境変数（SUPABASE_URL, SUPABASE_KEY）が設定されていません。", 500
 
-
-# -------------------------------------------------------------------------
-# 1. ルーティング（画面表示：データ取得のみ）
-# -------------------------------------------------------------------------
-@app.route("/")
-def index():
-    try:
-        supabase = get_supabase_client()
-        response = supabase.table(TABLE_NAME).select("*").execute()
-        rows = response.data
-    except Exception as e:
-        # VercelのLogsにエラー詳細を出すため、printではなく標準エラー出力等に反映
-        print(f"データベース取得エラー詳細: {str(e)}")
-        rows = []
-
-    return render_template("index.html", rows=rows)
-
-
-# -------------------------------------------------------------------------
-# 2. CSVデータをSupabaseへUPSERTする専用API（末尾 /api/sync）
-# -------------------------------------------------------------------------
-@app.route("/api/sync")
-def sync_data():
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    csv_file_path = os.path.join(current_dir, "data.csv")
-    
-    if not os.path.exists(csv_file_path):
-        return jsonify({"status": "error", "message": f"{csv_file_path} が見つかりません。"}), 404
+    if not os.path.exists(CSV_FILE):
+        return f"エラー: CSVファイルが見つかりません。配置パス: {CSV_FILE}", 404
 
     try:
-        with open(csv_file_path, mode="r", encoding="utf-8") as f:
+        # Supabaseクライアントの初期化（sb_publishable_... キーの不整合を防ぐためスキーマを明示）
+        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options={"schema": "public"})
+
+        # -------------------------------------------------------------------------
+        # 1. CSVを読み込んでSupabaseへUpsert（データの同期を実行）
+        # -------------------------------------------------------------------------
+        rows_to_upsert = []
+        with open(CSV_FILE, mode='r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
-            rows = [row for row in reader]
+            for row in reader:
+                # 💡 新しいテーブル・CSVに合わせて 'role' を除外し、'id' と 'name' のみに修正
+                rows_to_upsert.append({
+                    "id": row["id"],
+                    "name": row["name"]
+                })
         
-        if rows:
-            supabase = get_supabase_client()
-            # UPSERTを実行
-            supabase.table(TABLE_NAME).upsert(rows).execute()
-            return jsonify({"status": "success", "message": f"{len(rows)} 件のデータをUPSERTしました。"})
-        else:
-            return jsonify({"status": "warning", "message": "data.csv が空です。"})
-            
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+        if rows_to_upsert:
+            supabase.table("users").upsert(rows_to_upsert).execute()
 
+        # -------------------------------------------------------------------------
+        # 2. 画面表示用に、Supabaseから最新のデータを全件引っ張ってくる
+        # -------------------------------------------------------------------------
+        # 引数を "id" だけにし、desc=False（昇順）の安全な形式
+        response = supabase.table("users").select("*").order("id", desc=False).execute()
+        current_users = response.data
+
+        # -------------------------------------------------------------------------
+        # 3. HTMLテンプレートにSupabaseのデータを乗せてブラウザにレンダリング
+        # -------------------------------------------------------------------------
+        # HTML側の記述と合わせるため、変数名は「users」のまま渡します
+        return render_template('index.html', users=current_users)
+
+    except Exception as e:
+        return f"システムエラーが発生しました: {str(e)}", 500
+
+
+# Vercel環境で正しくWebサーバーとして認識させるための設定
+wsgi_app = app.wsgi_app
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
