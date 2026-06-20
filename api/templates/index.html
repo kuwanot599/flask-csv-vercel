@@ -2,51 +2,124 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ユーザーデータ同期システム</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-gray-50 min-h-screen font-sans">
-
-    <div class="max-w-4xl mx-auto px-4 py-12">
-        <div class="mb-8 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-bold text-gray-900 tracking-tight">ユーザーマスター管理</h1>
-                <p class="text-sm text-gray-500 mt-1">GitHubのCSVデータからSupabaseへ自動同期された最新のレコードです。</p>
-            </div>
-            <span class="inline-flex items-center gap-1.5 py-1.5 px-3 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                <span class="w-2 h-2 inline-block bg-green-500 rounded-full animate-pulse"></span>
-                Supabase Connected
-            </span>
-        </div>
-
-        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <table class="w-full text-left border-collapse">
-                <thead>
-                    <tr class="bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                        <th class="px-6 py-4">ID</th>
-                        <th class="px-6 py-4">氏名 (Name)</th>
-                        <th class="px-6 py-4">役職 / ロール (Role)</th>
-                    </tr>
-                </thead>
-                <tbody class="divide-y divide-gray-100 text-sm text-gray-700">
-                    {% for user in users %}
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="px-6 py-4 font-mono font-medium text-gray-500">{{ user.id }}</td>
-                        <td class="px-6 py-4 font-semibold text-gray-900">{{ user.name }}</td>
-                        <td class="px-6 py-4">
-                            <span class="inline-block px-2.5 py-1 text-xs font-medium rounded-md bg-blue-50 text-blue-700 border border-blue-100">
-                                {{ user.role }}
-                            </span>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+    <title>データ連携結果</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        .control-box {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .result-wrapper { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+        #comma-values {
+            font-weight: bold;
+            padding: 5px 10px;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            min-width: 200px;
+        }
+        .copy-btn {
+            padding: 6px 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .copy-btn:hover { background-color: #0056b3; }
         
-        <p class="text-center text-xs text-gray-400 mt-6">データ更新を行うには、ローカルの data.csv を書き換えて GitHub へ push してください。</p>
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        
+        /* 選択された行のスタイル（わかりやすく背景色を変更） */
+        tr.selected-row { background-color: #e3f2fd; }
+        .selectable { cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h1>Supabase データ一覧</h1>
+
+    <div class="control-box">
+        <div>レコードをクリックした順にキーが並びます（もう一度クリックで解除）</div>
+        <div class="result-wrapper">
+            <span id="comma-values">(レコード未選択)</span>
+            <button class="copy-btn" onclick="copyToClipboard()">コピー</button>
+        </div>
     </div>
 
+    <table>
+        <thead>
+            <tr>
+                <th>キー列 (ID)</th>
+                <th>名前</th>
+                <th>更新日時</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr class="selectable" data-id="{{ row.id }}">
+                <td>{{ row.id }}</td>
+                <td>{{ row.name }}</td>
+                <td>{{ row.updated_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <script>
+        // 選択されたキー（ID）を選択順に保持する配列
+        let selectedKeys = [];
+
+        // 全ての行（tr.selectable）に対してクリックイベントを設定
+        document.querySelectorAll('.selectable').forEach(row => {
+            row.addEventListener('click', function() {
+                const keyId = this.getAttribute('data-id');
+                
+                if (this.classList.contains('selected-row')) {
+                    // すでに選択されている場合は解除（配列から削除）
+                    this.classList.remove('selected-row');
+                    selectedKeys = selectedKeys.filter(id => id !== keyId);
+                } else {
+                    // 未選択の場合は選択（配列の最後に追加 ＝ 選択順になる）
+                    this.classList.add('selected-row');
+                    selectedKeys.push(keyId);
+                }
+
+                // 画面上の表示を更新（カンマ区切り）
+                updateDisplay();
+            });
+        });
+
+        // 画面のカンマ区切り表示を更新する関数
+        function updateDisplay() {
+            const displaySpan = document.getElementById('comma-values');
+            if (selectedKeys.length > 0) {
+                displaySpan.textContent = selectedKeys.join(', ');
+            } else {
+                displaySpan.textContent = '(レコード未選択)';
+            }
+        }
+
+        // クリップボードにコピーする関数
+        function copyToClipboard() {
+            if (selectedKeys.length === 0) {
+                alert('コピーするレコードが選択されていません。');
+                return;
+            }
+            
+            const textToCopy = selectedKeys.join(', ');
+            
+            // Modern Clipboard API を使用
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                alert('コピーしました: ' + textToCopy);
+            }).catch(err => {
+                console.error('コピーに失敗しました: ', err);
+            });
+        }
+    </script>
 </body>
 </html>

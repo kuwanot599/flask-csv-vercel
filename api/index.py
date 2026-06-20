@@ -1,49 +1,96 @@
-from flask import Flask, render_template, jsonify
-import csv
 import os
+import csv
+from flask import Flask, render_template, jsonify
 from supabase import create_client, Client
 
-# Vercel環境でtemplatesフォルダを正しく読み込ませるためのパス明示設定
-app = Flask(__name__, template_folder='templates')
+app = Flask(__name__)
 
+# -------------------------------------------------------------------------
+# 1. Supabase の接続設定
+# Vercelの環境変数（Environment Variables）から認証情報を取得します
+# -------------------------------------------------------------------------
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
-CSV_FILE = os.path.join(os.path.dirname(__file__), '../data.csv')
+SUPABASE_KEY = os.environ.get("SUPABASE_ANON_KEY")
 
-@app.route('/')
-def sync_and_show_table():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return "エラー: Supabaseの環境変数が設定されていません。", 500
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("Supabaseの環境変数（SUPABASE_URL, SUPABASE_ANON_KEY）が設定されていません。")
 
-    if not os.path.exists(CSV_FILE):
-        return "エラー: CSVファイルが見つかりません。", 404
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# 🔴 作り直した新しいSupabaseのテーブル名をここに指定してください
+TABLE_NAME = "users"
+
+
+# -------------------------------------------------------------------------
+# 2. CSVデータをSupabaseへUPSERTする関数
+# -------------------------------------------------------------------------
+def upsert_csv_data():
+    csv_file_path = "data.csv"
+    
+    # リポジトリ直下に data.csv が存在するか確認
+    if not os.path.exists(csv_file_path):
+        print(f"警告: {csv_file_path} が見つかりません。UPSERT処理をスキップします。")
+        return False
 
     try:
-        supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-        # 1. CSVを読み込んでSupabaseへUpsert（データの同期を実行）
-        rows_to_upsert = []
-        with open(CSV_FILE, mode='r', encoding='utf-8') as f:
+        with open(csv_file_path, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            for row in reader:
-                rows_to_upsert.append({
-                    "id": row["id"],
-                    "name": row["name"],
-                    "role": row["role"]
-                })
+            # CSVのヘッダー行をキーとした辞書のリストを作成
+            rows = [row for row in reader]
         
-        supabase.table("users").upsert(rows_to_upsert).execute()
-
-        # 2. 【ここが進化！】画面表示用に、Supabaseから最新のデータを全件引っ張ってくる
-        # id順（昇順）に並び替えて取得します
-
-        # response = supabase.table("users").select("*").order("id", ascending=True).execute()
-        # 引数を "id" だけにし、desc=False（降順ではない＝昇順）という安全な形式に差し替えます
-        response = supabase.table("users").select("*").order("id", desc=False).execute()
-        current_users = response.data
-
-        # 3. HTMLテンプレートにSupabaseのデータを乗せてブラウザにレンダリング
-        return render_template('index.html', users=current_users)
-
+        if rows:
+            # SupabaseにUPSERT（重複データは更新、新規データは挿入）
+            # ※CSVのヘッダー名と、Supabaseの列名が一致している必要があります
+            supabase.table(TABLE_NAME).upsert(rows).execute()
+            print(f"成功: {len(rows)} 件のデータを '{TABLE_NAME}' テーブルにUPSERTしました。")
+            return True
+        else:
+            print("警告: data.csv が空です。")
+            return False
+            
     except Exception as e:
-        return f"システムエラーが発生しました: {str(e)}", 500
+        print(f"エラー: CSVのUPSERT中に問題が発生しました: {e}")
+        return False
+
+
+# -------------------------------------------------------------------------
+# 3. Vercel起動時（または初回アクセス時）に自動でCSVを同期
+# -------------------------------------------------------------------------
+# アプリケーション起動時にCSVの内容を自動でSupabaseへ反映させます
+with app.app_context():
+    upsert_csv_data()
+
+
+# -------------------------------------------------------------------------
+# 4. ルーティング（画面表示）
+# -------------------------------------------------------------------------
+@app.route("/")
+def index():
+    try:
+        # Supabaseから最新のデータを全件取得
+        # （並び順を固定したい場合は .order('id') などを末尾に追記してください）
+        response = supabase.table(TABLE_NAME).select("*").execute()
+        rows = response.data
+    except Exception as e:
+        print(f"データベース取得エラー: {e}")
+        rows = []
+
+    # templates/index.html に取得したレコード一覧を渡してレンダリング
+    return render_template("index.html", rows=rows)
+
+
+# -------------------------------------------------------------------------
+# （参考）手動で再同期するためのAPIエンドポイント
+# -------------------------------------------------------------------------
+@app.route("/api/sync")
+def sync_data():
+    success = upsert_csv_data()
+    if success:
+        return jsonify({"status": "success", "message": "CSV data successfully synced to Supabase."})
+    else:
+        return jsonify({"status": "error", "message": "Failed to sync CSV data."}), 500
+
+
+# Vercel環境以外（ローカル開発環境など）で直接実行された場合の起動処理
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
