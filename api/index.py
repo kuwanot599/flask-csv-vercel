@@ -6,7 +6,7 @@ from supabase import create_client, Client
 app = Flask(__name__)
 
 # 🔴 作り直した新しいSupabaseのテーブル名
-TABLE_NAME = "my_new_table"
+TABLE_NAME = "users"
 
 
 # -------------------------------------------------------------------------
