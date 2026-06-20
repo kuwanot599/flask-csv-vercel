@@ -2,15 +2,15 @@ import os
 import csv
 from flask import Flask, render_template, jsonify
 from supabase import create_client, Client
-from supabase.lib.client_options import ClientOptions  # 💡 オプション設定をインポート
 
 app = Flask(__name__)
 
+# テーブル名は小文字の「users」で固定
 TABLE_NAME = "users"
 
 
 # -------------------------------------------------------------------------
-# 安全にSupabaseクライアントを生成する関数
+# 安全にSupabaseクライアントを生成する関数（インポートエラー対策版）
 # -------------------------------------------------------------------------
 def get_supabase_client() -> Client:
     SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -19,11 +19,11 @@ def get_supabase_client() -> Client:
     if not SUPABASE_URL or not SUPABASE_KEY:
         raise ValueError("Supabaseの環境変数（SUPABASE_URL, SUPABASE_ANON_KEY）が設定されていません。")
     
-    # 💡 sb_publishable_... のキーで PGRST125 エラー（パス不正）になるのを防ぐため、
-    # スキーマを 'public' に固定したクライアントオプションを明示的に渡します
-    options = ClientOptions(schema="public")
+    # 💡 外部クラスをインポートせず、プレーンな辞書型でオプションを指定して
+    # パス不正（PGRST125）とインポートエラー（500）を同時に回避します
+    safe_options = {"schema": "public"}
     
-    return create_client(SUPABASE_URL, SUPABASE_KEY, options=options)
+    return create_client(SUPABASE_URL, SUPABASE_KEY, options=safe_options)
 
 
 # -------------------------------------------------------------------------
@@ -33,12 +33,11 @@ def get_supabase_client() -> Client:
 def index():
     try:
         supabase = get_supabase_client()
-        
-        # クライアント生成時にオプションを渡しているため、そのままシンプルに呼び出せます
         response = supabase.table(TABLE_NAME).select("*").execute()
         rows = response.data
     except Exception as e:
-        print(f"データベース取得エラー: {e}")
+        # VercelのLogsにエラー詳細を出すため、printではなく標準エラー出力等に反映
+        print(f"データベース取得エラー詳細: {str(e)}")
         rows = []
 
     return render_template("index.html", rows=rows)
@@ -62,7 +61,6 @@ def sync_data():
         
         if rows:
             supabase = get_supabase_client()
-            
             # UPSERTを実行
             supabase.table(TABLE_NAME).upsert(rows).execute()
             return jsonify({"status": "success", "message": f"{len(rows)} 件のデータをUPSERTしました。"})
