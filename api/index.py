@@ -36,7 +36,10 @@ def sync_and_show_table():
 
         # 2. 【ここが進化！】画面表示用に、Supabaseから最新のデータを全件引っ張ってくる
         # id順（昇順）に並び替えて取得します
-        response = supabase.table("users").select("*").order("id", ascending=True).execute()
+
+        # response = supabase.table("users").select("*").order("id", ascending=True).execute()
+        # 引数を "id" だけにし、desc=False（降順ではない＝昇順）という安全な形式に差し替えます
+        response = supabase.table("users").select("*").order("id", desc=False).execute()
         current_users = response.data
 
         # 3. HTMLテンプレートにSupabaseのデータを乗せてブラウザにレンダリング
