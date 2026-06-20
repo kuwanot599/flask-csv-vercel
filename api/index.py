@@ -9,7 +9,7 @@ app = Flask(__name__, template_folder='templates')
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# 💡 以前うまくいっていたフォルダ構造（apiの一つ外の階層の data.csv）を正確に指定
+# 以前うまくいっていたフォルダ構造（apiの一つ外の階層の data.csv）を正確に指定
 CSV_FILE = os.path.join(os.path.dirname(__file__), '../data.csv')
 
 
@@ -25,14 +25,12 @@ def sync_and_show_table():
         # Supabaseクライアントの初期化（sb_publishable_... キーの不整合を防ぐためスキーマを明示）
         supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options={"schema": "public"})
 
-        # -------------------------------------------------------------------------
         # 1. CSVを読み込んでSupabaseへUpsert（データの同期を実行）
-        # -------------------------------------------------------------------------
         rows_to_upsert = []
         with open(CSV_FILE, mode='r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             for row in reader:
-                # 💡 新しいテーブル・CSVに合わせて 'role' を除外し、'id' と 'name' のみに修正
+                # 新しいテーブル・CSVに合わせて 'role' を除外し、'id' と 'name' のみに修正
                 rows_to_upsert.append({
                     "id": row["id"],
                     "name": row["name"]
@@ -41,25 +39,17 @@ def sync_and_show_table():
         if rows_to_upsert:
             supabase.table("users").upsert(rows_to_upsert).execute()
 
-        # -------------------------------------------------------------------------
         # 2. 画面表示用に、Supabaseから最新のデータを全件引っ張ってくる
-        # -------------------------------------------------------------------------
         # 引数を "id" だけにし、desc=False（昇順）の安全な形式
         response = supabase.table("users").select("*").order("id", desc=False).execute()
         current_users = response.data
 
-        # -------------------------------------------------------------------------
         # 3. HTMLテンプレートにSupabaseのデータを乗せてブラウザにレンダリング
-        # -------------------------------------------------------------------------
-        # HTML側の記述と合わせるため、変数名は「users」のまま渡します
         return render_template('index.html', users=current_users)
 
     except Exception as e:
         return f"システムエラーが発生しました: {str(e)}", 500
 
 
-# Vercel環境で正しくWebサーバーとして認識させるための設定
-wsgi_app = app.wsgi_app
-
-if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+# 💡 Vercel環境では、余計な wsgi_app の代入や app.run() は不要です。
+# 💡 Vercelが上の「app」インスタンスを直接見つけて起動します。
